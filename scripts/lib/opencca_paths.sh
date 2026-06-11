@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+
+if [[ -n "${OPENCCA_PATHS_SH_LOADED:-}" ]]; then
+    return 0
+fi
+OPENCCA_PATHS_SH_LOADED=1
+
+OPENCCA_WORK_DIR="${OPENCCA_WORK_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+OPENCCA_SNAPSHOT_DIR="${OPENCCA_SNAPSHOT_DIR:-$OPENCCA_WORK_DIR/snapshot}"
+OPENCCA_ROOTFS_DIR="${OPENCCA_ROOTFS_DIR:-$OPENCCA_WORK_DIR/rootfs}"
+OPENCCA_IMAGE_BASENAME="${OPENCCA_IMAGE_BASENAME:-opencca-image-rockchip-rock5b-rk3588.img}"
+OPENCCA_ROOTFS_IMAGE="${OPENCCA_ROOTFS_IMAGE:-$OPENCCA_ROOTFS_DIR/$OPENCCA_IMAGE_BASENAME}"
+
+OPENCCA_RPI_HOST="${OPENCCA_RPI_HOST:-mzh@192.168.31.52}"
+OPENCCA_RPI_SSH_PORT="${OPENCCA_RPI_SSH_PORT:-22}"
+OPENCCA_RPI_PASSWORD="${OPENCCA_RPI_PASSWORD:-}"
+OPENCCA_RPI_SUDO_PASSWORD="${OPENCCA_RPI_SUDO_PASSWORD:-}"
+OPENCCA_RPI_FLASH_ROOT="${OPENCCA_RPI_FLASH_ROOT:-/home/mzh/opencca-flash}"
+
+OPENCCA_SD_STORAGE_ID="${OPENCCA_SD_STORAGE_ID:-2}"
+OPENCCA_EMMC_STORAGE_ID="${OPENCCA_EMMC_STORAGE_ID:-1}"
+OPENCCA_SPI_STORAGE_ID="${OPENCCA_SPI_STORAGE_ID:-9}"
+OPENCCA_FIRMWARE_STORAGE_ID="${OPENCCA_FIRMWARE_STORAGE_ID:-$OPENCCA_SD_STORAGE_ID}"
+OPENCCA_ROOTFS_STORAGE_ID="${OPENCCA_ROOTFS_STORAGE_ID:-$OPENCCA_SD_STORAGE_ID}"
+
+OPENCCA_RK_HOST="${OPENCCA_RK_HOST:-root@192.168.31.18}"
+OPENCCA_RK_SSH_PORT="${OPENCCA_RK_SSH_PORT:-22}"
+OPENCCA_RK_PASSWORD="${OPENCCA_RK_PASSWORD:-}"
+
+OPENCCA_RK_STATIC_IP="${OPENCCA_RK_STATIC_IP:-192.168.31.18/24}"
+OPENCCA_RK_GATEWAY="${OPENCCA_RK_GATEWAY:-192.168.31.1}"
+OPENCCA_RK_DNS="${OPENCCA_RK_DNS:-192.168.31.1}"
+OPENCCA_RK_ETH_IFACE="${OPENCCA_RK_ETH_IFACE:-enP4p65s0}"
+OPENCCA_RK_ROOT_PASSWORD="${OPENCCA_RK_ROOT_PASSWORD:-}"
+
+opencca_log() {
+    printf '[opencca] %s\n' "$*"
+}
+
+opencca_die() {
+    printf '[opencca] error: %s\n' "$*" >&2
+    exit 1
+}
+
+opencca_require_cmd() {
+    local cmd
+    for cmd in "$@"; do
+        command -v "$cmd" >/dev/null 2>&1 || opencca_die "missing required command: $cmd"
+    done
+}
+
+opencca_require_file() {
+    local file="$1"
+    [[ -f "$file" ]] || opencca_die "missing expected file: $file"
+}
+
+opencca_rsync_ssh() {
+    local cmd=(
+        ssh
+        -p "$OPENCCA_RPI_SSH_PORT"
+        -oBatchMode=no
+        -oStrictHostKeyChecking=accept-new
+        -oUserKnownHostsFile=/tmp/opencca_known_hosts
+    )
+    if [[ -n "$OPENCCA_RPI_PASSWORD" ]]; then
+        cmd=(sshpass -p "$OPENCCA_RPI_PASSWORD" "${cmd[@]}")
+    fi
+    printf '%q ' "${cmd[@]}"
+}

@@ -1,0 +1,42 @@
+[submodule "tf-rmm"]
+	path = tf-rmm
+	url = git@github.com:marsha1111mao-del/tf-rmm.git
+	branch = main
+[submodule "armbian-rkbin"]
+	path = armbian-rkbin
+	url = https://github.com/armbian/rkbin.git
+[submodule "buildroot"]
+	path = buildroot
+	url = https://github.com/buildroot/buildroot.git
+[submodule "debian-image-recipes"]
+	path = debian-image-recipes
+	url = https://github.com/opencca/debian-image-recipes
+[submodule "kvmtool"]
+	path = kvmtool
+	url = https://github.com/opencca/kvmtool
+[submodule "linux"]
+	path = linux
+	url = https://github.com/opencca/linux
+[submodule "opencca-assets"]
+	path = opencca-assets
+	url = https://github.com/opencca/opencca-assets
+	ignore = dirty
+[submodule "opencca-build"]
+	path = opencca-build
+	url = https://github.com/opencca/opencca-build
+	ignore = dirty
+[submodule "opencca-flash"]
+	path = opencca-flash
+	url = https://github.com/opencca/opencca-flash
+[submodule "opencca-manifest"]
+	path = opencca-manifest
+	url = https://github.com/opencca/opencca-manifest
+[submodule "rkbin"]
+	path = rkbin
+	url = https://github.com/opencca/rkbin
+[submodule "trusted-firmware-a"]
+	path = trusted-firmware-a
+	url = https://github.com/opencca/arm-trusted-firmware
+[submodule "u-boot"]
+	path = u-boot
+	url = https://github.com/opencca/u-boot

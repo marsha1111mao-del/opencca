@@ -1,0 +1,33 @@
+diff --git a/buildconf/firmware_opencca.mk b/buildconf/firmware_opencca.mk
+index 5ff1517..3ca10dc 100755
+--- a/buildconf/firmware_opencca.mk
++++ b/buildconf/firmware_opencca.mk
+@@ -93,7 +93,7 @@ rmm-clean: ## clean rmm
+ # U-Boot
+ # --------------------------
+ 
+-UBOOT_ROCKCHIP_TPL := $(ASSETS_DIR)/rk3588/rk3588_ddr_lp4_2112MHz_lp5_2736MHz_v1.08.bin
++UBOOT_ROCKCHIP_TPL := $(ASSETS_DIR)/rk3588/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.16.bin
+ UBOOT_CONFIG := $(UBOOT_DIR)/.config
+ UBOOT_FRAGMENT ?= $(UBOOT_DIR)/rk3588_fragment.config ## Uboot fragment
+ UBOOT_BIN := idbloader.img u-boot.itb u-boot-rockchip.bin u-boot-rockchip-spi.bin u-boot
+@@ -140,4 +140,3 @@ uboot-menuconfig:  ## run menuconfig for uboot
+ 
+ 
+ clean: tfa-clean rmm-clean uboot-clean ## clean all
+-
+diff --git a/buildconf/linux.mk b/buildconf/linux.mk
+index 79404e4..57538ce 100755
+--- a/buildconf/linux.mk
++++ b/buildconf/linux.mk
+@@ -108,8 +108,8 @@ debian: kconfig ## Build kernel and package into .deb archive (requires initial
+     # XXX: deb-pkg creates *.deb files in parent
+     # directory of linux dir. We move these to their own folder.
+ 	mkdir -p $(DEBIAN_RELEASE_DIR)
+-	cp --no-clobber $(LINUX_DIR)/../linux-upstream* $(DEBIAN_RELEASE_DIR)
+-	cp --no-clobber $(LINUX_DIR)/../linux-*.deb $(DEBIAN_RELEASE_DIR)
++	cp --no-clobber $(LINUX_DIR)/../linux-upstream* $(DEBIAN_RELEASE_DIR) || true
++	cp --no-clobber $(LINUX_DIR)/../linux-*.deb $(DEBIAN_RELEASE_DIR) || true
+ 	@echo "Files moved to $(DEBIAN_RELEASE_DIR)"
+ 	ls -al $(DEBIAN_RELEASE_DIR)/
+ 

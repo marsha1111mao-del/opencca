@@ -1,0 +1,31 @@
+diff --git a/opencca-image-rockchip-rk3588.yaml b/opencca-image-rockchip-rk3588.yaml
+index 9331bef..b1fba49 100644
+--- a/opencca-image-rockchip-rk3588.yaml
++++ b/opencca-image-rockchip-rk3588.yaml
+@@ -30,11 +30,15 @@ actions:
+         fs: none
+         start: 16384s
+         end: 24575s
+-      - name: root
++      - name: kernel
+         fs: ext4
+         start: 32768s  # 16M
+-        end: 100%
++        end: 294911s
+         flags: [ boot ]
++      - name: root
++        fs: ext4
++        start: 294912s  # 144M
++        end: 100%
+ 
+   - action: filesystem-deploy
+     setup-fstab: true
+@@ -142,7 +146,7 @@ actions:
+       IMAGE="$ARTIFACTDIR/{{ $image }}.img"
+       OUTPUT="$ARTIFACTDIR/vm-rootfs.ext4"
+       SECTOR_SIZE=512
+-      ROOT_START_SECTOR=32768
++      ROOT_START_SECTOR=294912
+       dd if="$IMAGE" of="$OUTPUT" bs=$SECTOR_SIZE skip=$ROOT_START_SECTOR status=progress
+ 
+   - action: run

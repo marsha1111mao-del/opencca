@@ -41,9 +41,14 @@ Verified on 2026-06-11:
 
 ```text
 /dev/mmcblk1p3 128M ext4 label=kernel partlabel=kernel
-/dev/mmcblk1p4 3.7G ext4 label=root   partlabel=root mounted at /
-root=PARTLABEL=root rootwait isolcpus=1,2,3 maxcpus=2 nohlt cpuidle.off=1 rcupdate.rcu_cpu_st maxcpus=2
+/dev/mmcblk1p4 29.6G ext4 label=root   partlabel=root mounted at /
+root=PARTLABEL=root rootwait isolcpus=1,2,3 maxcpus=2 nohlt cpuidle.off=1 rcupdate.rcu_cpu_st ignore_loglevel initcall_debug maxcpus=2
 ```
+
+The current board was verified booting `6.12.0-opencca-pmthor` from this SD
+layout, with `/dev/pmthor` present and the root filesystem mounted from
+`/dev/mmcblk1p4`. The root partition was expanded online after the one-time full
+image flash.
 
 ## Build The Kernel Boot Partition
 
@@ -68,6 +73,20 @@ Known-good image recorded on 2026-06-11:
 snapshot/kernel-extlinux.img
 sha256=5b41a8d86bdc52722ca20c4d81a2e9fc4db230b4de4b19c44430beae81ccbc2e
 ```
+
+The current pmthor image recorded on 2026-06-11:
+
+```text
+snapshot/kernel-pmthor-rootfs-matched-extlinux.img
+sha256=4dc22f56de99fddf9828d2e6c7155df292dc04003b769f893618d8703549e1a0
+initrd sha256=aba43936324ff7693cfcebf8b5bf6b740ed6e90eca3f4557b1d24516236361d0
+```
+
+When building a custom kernel image, keep the kernel release and rootfs modules
+matched. Do not reuse the stock `6.12.0-opencca-wip` version string for a
+different kernel. For the pmthor test image, the running release is
+`6.12.0-opencca-pmthor` and the rootfs contains
+`/lib/modules/6.12.0-opencca-pmthor`.
 
 ## Convert An Old OpenCCA Image Once
 
@@ -116,13 +135,32 @@ OPENCCA_RPI_PASSWORD=root OPENCCA_RPI_SUDO_PASSWORD=root OPENCCA_RK_PASSWORD=roo
   --flash-kernel --wait-rk
 ```
 
+For the current pmthor kernel slot:
+
+```bash
+OPENCCA_RPI_PASSWORD=root OPENCCA_RPI_SUDO_PASSWORD=root OPENCCA_RK_PASSWORD=root \
+  ./scripts/firmware/flash-rk3588-via-pi.sh \
+  --kernel-image snapshot/kernel-pmthor-rootfs-matched-extlinux.img \
+  --flash-kernel --wait-rk
+```
+
 The wrapper first performs a live RK partition preflight. The Pi-side helper then
 enters Maskrom, transfers the SPL loader, selects Rockchip storage ID `2`, reads
 GPT with `rkdeveloptool rl`, validates `PARTLABEL=kernel` at LBA `0x8000`, and
 writes only that kernel partition with `rkdeveloptool wl 0x8000 ...`.
 
 This kernel-only path was verified on 2026-06-11. The board came back over SSH
-with root still mounted from `/dev/mmcblk1p4`.
+with root still mounted from `/dev/mmcblk1p4`. The Pi-side log showed storage
+ID `2`, Samsung SD size about 30 GB, and a write to kernel slot LBA `0x8000`.
+
+For pmthor testing, do not put `module_blacklist=panthor,pmthor` in extlinux.
+That blocks the host-direct test from manually loading `panthor`. Instead, keep
+the boot default in rootfs:
+
+```text
+/etc/modprobe.d/opencca-gpu.conf: blacklist panthor
+/etc/modules-load.d/opencca-gpu.conf: pmthor_drv
+```
 
 ## Direct Raspberry Pi Equivalent
 

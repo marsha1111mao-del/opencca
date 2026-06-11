@@ -100,7 +100,7 @@ def validate_named_slot(gpt_path, expected_name, expected_start, slot_sectors, r
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Validate an OpenCCA raw GPT partition slot")
+    parser = argparse.ArgumentParser(description="Validate an OpenCCA GPT kernel boot slot")
     parser.add_argument("gpt_dump", type=Path)
     parser.add_argument("start", type=parse_int)
     parser.add_argument("sectors", type=parse_int)

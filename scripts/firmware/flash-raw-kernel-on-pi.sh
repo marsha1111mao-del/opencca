@@ -22,7 +22,7 @@ fi
 SNAPSHOT_DIR="${OPENCCA_SNAPSHOT_DIR:-$OPENCCA_RPI_FLASH_ROOT/snapshot}"
 RKDEVELOP_TOOL="${OPENCCA_RKDEVELOP_TOOL:-$OPENCCA_RPI_FLASH_ROOT/tools/rkdeveloptool}"
 OPENCCA_SPL_LOADER="${OPENCCA_SPL_LOADER:-$OPENCCA_RPI_FLASH_ROOT/tools/rk3588/rk3588_spl_loader_v1.16.113.bin}"
-OPENCCA_KERNEL_IMAGE="${OPENCCA_KERNEL_IMAGE:-$SNAPSHOT_DIR/kernel.img}"
+OPENCCA_KERNEL_IMAGE="${OPENCCA_KERNEL_IMAGE:-$SNAPSHOT_DIR/kernel-extlinux.img}"
 OPENCCA_KERNEL_STORAGE_ID="${OPENCCA_KERNEL_STORAGE_ID:-2}"
 OPENCCA_SD_STORAGE_ID="${OPENCCA_SD_STORAGE_ID:-2}"
 OPENCCA_KERNEL_SLOT_START="${OPENCCA_KERNEL_SLOT_START:-0x8000}"
@@ -40,7 +40,7 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0")
 
-Flash only the OpenCCA raw RK3588 kernel slot on SD storage.
+Flash only the OpenCCA RK3588 kernel boot slot on SD storage.
 
 Environment:
   OPENCCA_RPI_FLASH_ROOT          Default: $OPENCCA_RPI_FLASH_ROOT
@@ -163,7 +163,7 @@ validate_gpt_slot() {
     }
     trap cleanup_gpt RETURN
 
-    log "reading GPT before raw kernel write"
+    log "reading GPT before kernel boot slot write"
     rk rl 0 "$OPENCCA_KERNEL_GPT_READ_SECTORS" "$gpt_dump"
     python3 "$VALIDATOR" \
         "$gpt_dump" \
@@ -183,7 +183,7 @@ transfer_loader
 select_storage
 validate_gpt_slot
 
-log "writing $(basename "$OPENCCA_KERNEL_IMAGE") to LBA $OPENCCA_KERNEL_SLOT_START"
+log "writing $(basename "$OPENCCA_KERNEL_IMAGE") to kernel slot LBA $OPENCCA_KERNEL_SLOT_START"
 rk wl "$OPENCCA_KERNEL_SLOT_START" "$OPENCCA_KERNEL_IMAGE"
 release_maskrom_button
 

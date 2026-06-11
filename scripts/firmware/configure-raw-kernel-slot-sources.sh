@@ -11,7 +11,7 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0") [options]
 
-Patch local OpenCCA source checkouts for the SD raw-kernel-slot layout.
+Patch local OpenCCA source checkouts for the SD kernel-boot-slot layout.
 This edits nested source trees; commit those repositories separately if needed.
 
 Options:
@@ -43,7 +43,7 @@ done
 
 uboot_config="$OPENCCA_UBOOT_DIR/rk3588_fragment.config"
 recipe="$OPENCCA_DEBIAN_IMAGE_RECIPES_DIR/opencca-image-rockchip-rk3588.yaml"
-bootcommand='CONFIG_BOOTCOMMAND="mmc dev 0; if mmc read 0x50000000 0x8000 0x40000; then setenv bootargs root=PARTLABEL=root rootwait isolcpus=1,2,3 maxcpus=2 nohlt cpuidle.off=1 rcupdate.rcu_cpu_st; bootm 0x50000000; fi; bootflow scan"'
+bootcommand="CONFIG_BOOTCOMMAND=\"bootflow scan\""
 
 opencca_require_file "$uboot_config"
 opencca_require_file "$recipe"
@@ -54,11 +54,17 @@ if [[ "$DRY_RUN" == "1" ]]; then
     exit 0
 fi
 
-if grep -q '^CONFIG_BOOTCOMMAND=' "$uboot_config"; then
-    sed -i "s#^CONFIG_BOOTCOMMAND=.*#$bootcommand#" "$uboot_config"
-else
-    printf '%s\n' "$bootcommand" >>"$uboot_config"
-fi
+python3 - "$uboot_config" "$bootcommand" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+bootcommand = sys.argv[2]
+lines = path.read_text().splitlines()
+lines = [line for line in lines if not line.startswith("CONFIG_BOOTCOMMAND=")]
+lines.append(bootcommand)
+path.write_text("\n".join(lines) + "\n")
+PY
 
 python3 - "$recipe" <<'PY'
 from pathlib import Path
@@ -74,6 +80,22 @@ old_root = """      - name: root
         flags: [ boot ]
 """
 new_root = """      - name: kernel
+        fs: ext4
+        start: 32768s  # 16M
+        end: 294911s
+        flags: [ boot ]
+      - name: root
+        fs: ext4
+        start: 294912s  # 144M
+        end: 100%
+"""
+
+if "name: kernel" not in text:
+    if old_root not in text:
+        raise SystemExit("could not find old root partition block")
+    text = text.replace(old_root, new_root, 1)
+
+old_existing = """      - name: kernel
         fs: none
         start: 32768s  # 16M
         end: 294911s
@@ -83,15 +105,12 @@ new_root = """      - name: kernel
         end: 100%
         flags: [ boot ]
 """
-
-if "name: kernel" not in text:
-    if old_root not in text:
-        raise SystemExit("could not find old root partition block")
-    text = text.replace(old_root, new_root, 1)
+if old_existing in text:
+    text = text.replace(old_existing, new_root, 1)
 
 text = text.replace("ROOT_START_SECTOR=32768", "ROOT_START_SECTOR=294912")
 path.write_text(text)
 PY
 
-opencca_log "configured U-Boot raw-kernel boot command"
+opencca_log "configured U-Boot bootflow command"
 opencca_log "configured debian-image-recipes root start at 0x48000"

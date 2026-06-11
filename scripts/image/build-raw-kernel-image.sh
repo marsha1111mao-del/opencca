@@ -4,27 +4,32 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/opencca_paths.sh"
 
 OPENCCA_LINUX_DIR="${OPENCCA_LINUX_DIR:-$OPENCCA_WORK_DIR/linux}"
-OPENCCA_UBOOT_DIR="${OPENCCA_UBOOT_DIR:-$OPENCCA_WORK_DIR/u-boot}"
-OPENCCA_RKBIN_DIR="${OPENCCA_RKBIN_DIR:-$OPENCCA_WORK_DIR/rkbin}"
 KERNEL_IMAGE_SOURCE="${OPENCCA_KERNEL_IMAGE_SOURCE:-}"
 KERNEL_DTB_SOURCE="${OPENCCA_KERNEL_DTB_SOURCE:-}"
+KERNEL_INITRD_SOURCE="${OPENCCA_KERNEL_INITRD_SOURCE:-}"
+OPENCCA_KERNEL_ROOT="${OPENCCA_KERNEL_ROOT:-PARTLABEL=root}"
+OPENCCA_KERNEL_VERSION="${OPENCCA_KERNEL_VERSION:-6.12.0-opencca-wip}"
+OPENCCA_KERNEL_CMDLINE="${OPENCCA_KERNEL_CMDLINE:-rootwait isolcpus=1,2,3 maxcpus=2 nohlt cpuidle.off=1 rcupdate.rcu_cpu_st}"
 DRY_RUN=0
 
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [options]
 
-Build the fixed-size raw OpenCCA RK3588 kernel slot image from a Linux Image
-and rk3588-rock-5b.dtb. The output is suitable for rkdeveloptool wl
-OPENCCA_KERNEL_SLOT_START.
+Build the fixed-size OpenCCA RK3588 kernel boot partition image. The output is
+an ext4 filesystem that U-Boot can discover through bootflow/extlinux, and is
+suitable for rkdeveloptool wl OPENCCA_KERNEL_SLOT_START.
 
 Options:
   --image PATH        Linux Image input. Default: snapshot/Image, then linux tree.
   --dtb PATH          rk3588-rock-5b.dtb input. Default: linux tree, then snapshot.
-  --output PATH       Raw kernel output. Default: $OPENCCA_KERNEL_IMAGE
-  --slot-sectors N    Raw slot sectors. Default: $OPENCCA_KERNEL_SLOT_SECTORS
-  --load-addr ADDR    FIT load address. Default: $OPENCCA_KERNEL_LOAD_ADDR
-  --entry-addr ADDR   FIT entry address. Default: $OPENCCA_KERNEL_ENTRY_ADDR
+  --initrd PATH       Initrd image to include. Recommended for OpenCCA Debian.
+  --root VALUE        Kernel root= value. Default: $OPENCCA_KERNEL_ROOT
+  --version VALUE     Kernel version string used in /boot names.
+                     Default: $OPENCCA_KERNEL_VERSION
+  --cmdline VALUE     Extra kernel command line after root=VALUE.
+  --output PATH       Kernel partition output. Default: $OPENCCA_KERNEL_IMAGE
+  --slot-sectors N    Kernel slot sectors. Default: $OPENCCA_KERNEL_SLOT_SECTORS
   --dry-run           Print commands without running them.
   -h, --help          Show this help.
 
@@ -32,8 +37,8 @@ Environment:
   OPENCCA_WORK_DIR              Default: $OPENCCA_WORK_DIR
   OPENCCA_SNAPSHOT_DIR          Default: $OPENCCA_SNAPSHOT_DIR
   OPENCCA_LINUX_DIR             Default: $OPENCCA_LINUX_DIR
-  OPENCCA_UBOOT_DIR             Default: $OPENCCA_UBOOT_DIR
-  OPENCCA_MKIMAGE               Optional mkimage path.
+  OPENCCA_KERNEL_ROOT           Default: $OPENCCA_KERNEL_ROOT
+  OPENCCA_KERNEL_INITRD_SOURCE  Optional initrd input.
 EOF
 }
 
@@ -49,6 +54,26 @@ while [[ $# -gt 0 ]]; do
             [[ $# -gt 0 ]] || opencca_die "--dtb requires a path"
             KERNEL_DTB_SOURCE="$1"
             ;;
+        --initrd)
+            shift
+            [[ $# -gt 0 ]] || opencca_die "--initrd requires a path"
+            KERNEL_INITRD_SOURCE="$1"
+            ;;
+        --root)
+            shift
+            [[ $# -gt 0 ]] || opencca_die "--root requires a value"
+            OPENCCA_KERNEL_ROOT="$1"
+            ;;
+        --version)
+            shift
+            [[ $# -gt 0 ]] || opencca_die "--version requires a value"
+            OPENCCA_KERNEL_VERSION="$1"
+            ;;
+        --cmdline)
+            shift
+            [[ $# -gt 0 ]] || opencca_die "--cmdline requires a value"
+            OPENCCA_KERNEL_CMDLINE="$1"
+            ;;
         --output)
             shift
             [[ $# -gt 0 ]] || opencca_die "--output requires a path"
@@ -58,16 +83,6 @@ while [[ $# -gt 0 ]]; do
             shift
             [[ $# -gt 0 ]] || opencca_die "--slot-sectors requires a value"
             OPENCCA_KERNEL_SLOT_SECTORS="$1"
-            ;;
-        --load-addr)
-            shift
-            [[ $# -gt 0 ]] || opencca_die "--load-addr requires a value"
-            OPENCCA_KERNEL_LOAD_ADDR="$1"
-            ;;
-        --entry-addr)
-            shift
-            [[ $# -gt 0 ]] || opencca_die "--entry-addr requires a value"
-            OPENCCA_KERNEL_ENTRY_ADDR="$1"
             ;;
         --dry-run)
             DRY_RUN=1
@@ -93,17 +108,6 @@ run_cmd() {
     fi
 }
 
-run_cmd_in_dir() {
-    local dir="$1"
-    shift
-    printf '[opencca-kernel] cd %q &&' "$dir"
-    printf ' %q' "$@"
-    printf '\n'
-    if [[ "$DRY_RUN" == "0" ]]; then
-        (cd "$dir" && "$@")
-    fi
-}
-
 copy_if_different() {
     local src="$1"
     local dst="$2"
@@ -117,8 +121,22 @@ copy_if_different() {
 find_default_image() {
     local candidate
     for candidate in \
+        "$OPENCCA_SNAPSHOT_DIR/vmlinuz-$OPENCCA_KERNEL_VERSION" \
         "$OPENCCA_SNAPSHOT_DIR/Image" \
         "$OPENCCA_LINUX_DIR/arch/arm64/boot/Image"; do
+        if [[ -f "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+find_default_initrd() {
+    local candidate
+    for candidate in \
+        "$OPENCCA_SNAPSHOT_DIR/initrd.img-$OPENCCA_KERNEL_VERSION" \
+        "$OPENCCA_SNAPSHOT_DIR/initrd.img"; do
         if [[ -f "$candidate" ]]; then
             printf '%s\n' "$candidate"
             return 0
@@ -140,111 +158,80 @@ find_default_dtb() {
     return 1
 }
 
-find_mkimage() {
-    local candidate
-    if [[ -n "${OPENCCA_MKIMAGE:-}" ]]; then
-        printf '%s\n' "$OPENCCA_MKIMAGE"
-        return 0
-    fi
-    if command -v mkimage >/dev/null 2>&1; then
-        command -v mkimage
-        return 0
-    fi
-    for candidate in \
-        "$OPENCCA_UBOOT_DIR/tools/mkimage" \
-        "$OPENCCA_RKBIN_DIR/tools/mkimage"; do
-        if [[ -x "$candidate" ]]; then
-            printf '%s\n' "$candidate"
-            return 0
-        fi
-    done
-    return 1
-}
-
 if [[ -z "$KERNEL_IMAGE_SOURCE" ]]; then
-    KERNEL_IMAGE_SOURCE=$(find_default_image) || opencca_die "missing Linux Image; build the kernel or pass --image"
+    KERNEL_IMAGE_SOURCE=$(find_default_image) || opencca_die "missing Linux Image/vmlinuz; build the kernel or pass --image"
 fi
 if [[ -z "$KERNEL_DTB_SOURCE" ]]; then
     KERNEL_DTB_SOURCE=$(find_default_dtb) || opencca_die "missing rk3588-rock-5b.dtb; build dtbs or pass --dtb"
 fi
-MKIMAGE=$(find_mkimage) || opencca_die "missing mkimage; build U-Boot tools or install u-boot-tools"
+if [[ -z "$KERNEL_INITRD_SOURCE" ]]; then
+    KERNEL_INITRD_SOURCE=$(find_default_initrd || true)
+fi
 
 opencca_require_file "$KERNEL_IMAGE_SOURCE"
 opencca_require_file "$KERNEL_DTB_SOURCE"
-opencca_require_cmd stat truncate sha256sum
+opencca_require_cmd mkfs.ext4 stat truncate sha256sum
 
 slot_bytes=$(( OPENCCA_KERNEL_SLOT_SECTORS * 512 ))
 output_dir=$(dirname "$OPENCCA_KERNEL_IMAGE")
-its_path="${OPENCCA_KERNEL_ITS:-$output_dir/kernel.its}"
-itb_path="${OPENCCA_KERNEL_ITB:-$output_dir/kernel.itb}"
-image_copy="$output_dir/Image"
-dtb_copy="$output_dir/rk3588-rock-5b.dtb"
+tmpdir=""
+
+cleanup() {
+    [[ -z "$tmpdir" ]] || rm -rf "$tmpdir"
+}
+trap cleanup EXIT
 
 run_cmd mkdir -p "$output_dir"
-copy_if_different "$KERNEL_IMAGE_SOURCE" "$image_copy"
-copy_if_different "$KERNEL_DTB_SOURCE" "$dtb_copy"
+tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/opencca-kernel-bootfs.XXXXXX")
+staging="$tmpdir/staging"
+image_tmp="$tmpdir/kernel.img"
+run_cmd mkdir -p \
+    "$staging/boot/extlinux" \
+    "$staging/usr/lib/linux-image-$OPENCCA_KERNEL_VERSION/rockchip"
 
-if [[ "$DRY_RUN" == "0" ]]; then
-    cat >"$its_path" <<EOF
-/dts-v1/;
-
-/ {
-	description = "OpenCCA RK3588 kernel";
-	#address-cells = <1>;
-
-	images {
-		kernel {
-			description = "Linux Image";
-			data = /incbin/("Image");
-			type = "kernel";
-			arch = "arm64";
-			os = "linux";
-			compression = "none";
-			load = <$OPENCCA_KERNEL_LOAD_ADDR>;
-			entry = <$OPENCCA_KERNEL_ENTRY_ADDR>;
-			hash {
-				algo = "sha256";
-			};
-		};
-
-		fdt {
-			description = "Rock 5B device tree";
-			data = /incbin/("rk3588-rock-5b.dtb");
-			type = "flat_dt";
-			arch = "arm64";
-			compression = "none";
-			hash {
-				algo = "sha256";
-			};
-		};
-	};
-
-	configurations {
-		default = "conf";
-		conf {
-			description = "OpenCCA RK3588";
-			kernel = "kernel";
-			fdt = "fdt";
-		};
-	};
-};
-EOF
+copy_if_different "$KERNEL_IMAGE_SOURCE" "$staging/boot/vmlinuz-$OPENCCA_KERNEL_VERSION"
+copy_if_different "$KERNEL_DTB_SOURCE" "$staging/usr/lib/linux-image-$OPENCCA_KERNEL_VERSION/rockchip/rk3588-rock-5b.dtb"
+initrd_line=""
+if [[ -n "$KERNEL_INITRD_SOURCE" ]]; then
+    opencca_require_file "$KERNEL_INITRD_SOURCE"
+    copy_if_different "$KERNEL_INITRD_SOURCE" "$staging/boot/initrd.img-$OPENCCA_KERNEL_VERSION"
+    initrd_line=$'\tinitrd /boot/initrd.img-'"$OPENCCA_KERNEL_VERSION"
 else
-    opencca_log "would write $its_path"
+    opencca_log "building without initrd; pass --initrd for the stock OpenCCA Debian boot path"
 fi
 
-run_cmd_in_dir "$output_dir" "$MKIMAGE" -f "$(basename "$its_path")" "$(basename "$itb_path")"
+if [[ "$DRY_RUN" == "0" ]]; then
+    cat >"$staging/boot/extlinux/extlinux.conf" <<EOF
+default l0
+menu title U-Boot menu
+prompt 0
+timeout 1
+
+label l0
+	menu label OpenCCA RK3588 $OPENCCA_KERNEL_VERSION
+	linux /boot/vmlinuz-$OPENCCA_KERNEL_VERSION
+$initrd_line
+	fdtdir /usr/lib/linux-image-$OPENCCA_KERNEL_VERSION/
+	append root=$OPENCCA_KERNEL_ROOT $OPENCCA_KERNEL_CMDLINE
+
+label l0r
+	menu label OpenCCA RK3588 $OPENCCA_KERNEL_VERSION rescue
+	linux /boot/vmlinuz-$OPENCCA_KERNEL_VERSION
+$initrd_line
+	fdtdir /usr/lib/linux-image-$OPENCCA_KERNEL_VERSION/
+	append root=$OPENCCA_KERNEL_ROOT $OPENCCA_KERNEL_CMDLINE single
+EOF
+fi
+
+run_cmd truncate -s "$slot_bytes" "$image_tmp"
+run_cmd mkfs.ext4 -F -L kernel -m 0 -d "$staging" "$image_tmp"
+run_cmd cp -f "$image_tmp" "$OPENCCA_KERNEL_IMAGE"
+run_cmd sha256sum "$OPENCCA_KERNEL_IMAGE"
 
 if [[ "$DRY_RUN" == "0" ]]; then
-    itb_bytes=$(stat -c%s "$itb_path")
-    if (( itb_bytes > slot_bytes )); then
-        opencca_die "$itb_path is too large: $itb_bytes bytes > $slot_bytes bytes"
+    actual_bytes=$(stat -c%s "$OPENCCA_KERNEL_IMAGE")
+    if (( actual_bytes != slot_bytes )); then
+        opencca_die "kernel image size mismatch: $actual_bytes != $slot_bytes"
     fi
-fi
-
-run_cmd cp -f "$itb_path" "$OPENCCA_KERNEL_IMAGE"
-run_cmd truncate -s "$slot_bytes" "$OPENCCA_KERNEL_IMAGE"
-if [[ "$DRY_RUN" == "0" ]]; then
-    sha256sum "$OPENCCA_KERNEL_IMAGE"
-    opencca_log "raw kernel slot image: $OPENCCA_KERNEL_IMAGE ($slot_bytes bytes, start $OPENCCA_KERNEL_SLOT_START)"
+    opencca_log "wrote ext4 kernel boot partition: $OPENCCA_KERNEL_IMAGE"
 fi

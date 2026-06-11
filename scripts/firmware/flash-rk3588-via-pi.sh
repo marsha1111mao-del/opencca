@@ -30,7 +30,7 @@ Options:
   --patch-rootfs-on-pi Patch rootfs image on the Pi before flashing.
   --flash-mmc          Flash SD boot firmware: idbloader.img and u-boot.itb.
   --flash-sd-firmware  Alias for --flash-mmc.
-  --flash-kernel       Flash only the SD raw kernel slot.
+  --flash-kernel       Flash only the SD kernel boot slot.
   --flash-spi          Run: sudo ./flash.sh spi
   --flash-rootfs       Flash full rootfs image to SD.
   --kernel-image PATH  Use PATH for --sync-kernel/--flash-kernel.
@@ -239,7 +239,7 @@ done
 
 if [[ "$kernel_ok" -ne 1 ]]; then
     echo "OPENCCA_KERNEL_PREFLIGHT_INCOMPATIBLE=1" >&2
-    echo "RK SD layout does not contain a compatible raw kernel slot." >&2
+    echo "RK SD layout does not contain a compatible kernel boot slot." >&2
     echo "Expected PARTLABEL=kernel start=$expected_start sectors>=$expected_sectors." >&2
     printf "%s" "$details" >&2
     exit 42

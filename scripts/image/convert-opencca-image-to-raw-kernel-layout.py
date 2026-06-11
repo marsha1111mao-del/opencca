@@ -95,13 +95,20 @@ def write_file_to_sector(src, dst, dst_sector):
     )
 
 
+def run_e2fsck_repair(rootfs):
+    print("+ e2fsck -fy {}".format(rootfs), file=sys.stderr)
+    result = subprocess.run(["e2fsck", "-fy", str(rootfs)], text=True)
+    if result.returncode not in (0, 1):
+        raise subprocess.CalledProcessError(result.returncode, result.args)
+
+
 def shrink_ext4(rootfs):
-    run(["e2fsck", "-fy", str(rootfs)])
+    run_e2fsck_repair(rootfs)
     run(["resize2fs", "-M", str(rootfs)])
-    run(["e2fsck", "-fy", str(rootfs)])
+    run_e2fsck_repair(rootfs)
 
 
-def make_partition_table(out, total_sectors, root_type):
+def make_partition_table(out, total_sectors, kernel_type):
     root_size = total_sectors - ROOT_START - 34
     if root_size <= 0:
         raise SystemExit("output image is too small for root start sector {:#x}".format(ROOT_START))
@@ -113,8 +120,8 @@ def make_partition_table(out, total_sectors, root_type):
         "sector-size: 512\n"
         "start={}, size={}, type=linux, name=loader1\n"
         "start={}, size={}, type=linux, name=loader2\n"
-        "start={}, size={}, type=linux, name=kernel\n"
-        "start={}, size={}, type={}, name=root\n"
+        "start={}, size={}, type={}, name=kernel\n"
+        "start={}, size={}, type=linux, name=root\n"
     ).format(
         LOADER1_START,
         LOADER1_SIZE,
@@ -122,9 +129,9 @@ def make_partition_table(out, total_sectors, root_type):
         LOADER2_SIZE,
         KERNEL_START,
         KERNEL_SIZE,
+        kernel_type or "linux",
         ROOT_START,
         root_size,
-        root_type or "linux",
     )
     run(["sfdisk", "--quiet", str(out)], input=table)
     return root_size
@@ -184,7 +191,7 @@ def convert_image(source, output, kernel, idbloader, uboot):
         write_file_to_sector(rootfs, output, ROOT_START)
 
     print("wrote compatible image: {}".format(output))
-    print("kernel slot: start={:#x}, sectors={:#x}".format(KERNEL_START, KERNEL_SIZE))
+    print("kernel boot slot: start={:#x}, sectors={:#x}".format(KERNEL_START, KERNEL_SIZE))
     print("rootfs: start={:#x}, capacity_sectors={:#x}".format(ROOT_START, root_capacity))
 
 
@@ -193,11 +200,11 @@ def main():
         require_tool(tool)
 
     parser = argparse.ArgumentParser(
-        description="Convert an old OpenCCA RK3588 image to the SD raw-kernel-slot layout"
+        description="Convert an old OpenCCA RK3588 image to the SD kernel-boot-slot layout"
     )
     parser.add_argument("source", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--kernel", type=Path, default=Path("snapshot/kernel.img"))
+    parser.add_argument("--kernel", type=Path, default=Path("snapshot/kernel-extlinux.img"))
     parser.add_argument("--idbloader", type=Path, help="Optional idbloader.img to write at LBA 0x40")
     parser.add_argument("--u-boot", type=Path, help="Optional u-boot.itb to write at LBA 0x4000")
     args = parser.parse_args()

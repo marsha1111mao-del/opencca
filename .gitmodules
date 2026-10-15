@@ -29,6 +29,8 @@
 [submodule "opencca-flash"]
 	path = opencca-flash
 	url = https://github.com/opencca/opencca-flash
+	# Local modifications are restored and verified by patches/manifest.json.
+	ignore = dirty
 [submodule "opencca-manifest"]
 	path = opencca-manifest
 	url = https://github.com/opencca/opencca-manifest

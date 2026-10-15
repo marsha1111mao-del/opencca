@@ -34,6 +34,14 @@ def restore(check=False):
         if digest(patch) != entry["sha256"]:
             raise ValueError(f"{entry['patch']}: patch checksum mismatch")
         if git(repo, "apply", "--reverse", "--check", str(patch)).returncode == 0:
+            actual = subprocess.check_output([
+                "git", "-C", str(repo), "diff", "--binary",
+                "--no-ext-diff", "--no-textconv", "HEAD"
+            ])
+            if hashlib.sha256(actual).hexdigest() != entry["sha256"]:
+                raise ValueError(
+                    f"{entry['repository']}: changes differ from the published patch"
+                )
             print(f"APPLIED {entry['repository']}")
         elif git(repo, "apply", "--check", str(patch)).returncode == 0:
             if check:

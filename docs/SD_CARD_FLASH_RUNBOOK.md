@@ -1,6 +1,7 @@
 # RK3588 SD Card Flash Notes
 
-This OpenCCA workspace targets SD-card boot, not eMMC.
+This OpenCCA workspace targets SD-card boot. eMMC is not part of the current
+runtime boot layout and is forbidden as a flash target for this workflow.
 
 `rkdeveloptool --help` reports the Rockchip storage IDs as:
 
@@ -9,6 +10,8 @@ ChangeStorage: cs [storage: 1=EMMC, 2=SD, 9=SPINOR]
 ```
 
 Use storage ID `2` for SD-card firmware, kernel-slot, and full-image writes.
+Never use storage ID `1`, and never run `rkdeveloptool cs 1`: that selects
+eMMC. SPI is a separate target, storage ID `9=SPINOR`.
 The wrapper defaults are:
 
 ```text

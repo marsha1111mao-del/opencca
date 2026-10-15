@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "patches": [
+    {
+      "repository": "opencca-flash",
+      "base_commit": "50142173291a75befa3266e0766c5860fa249670",
+      "patch": "patches/opencca-flash/local.patch",
+      "sha256": "d748e2eb319b1b7e2dad89ba2d806c5dab3e14d8788d352e28a777abb7c46d6d"
+    },
+    {
+      "repository": "opencca-build",
+      "base_commit": "d691ada999f1322444ce52dccb655579812fab3a",
+      "patch": "patches/opencca-build/local.patch",
+      "sha256": "79ffd2c7f0eccc6c6e4e86b2afc7e8c58ada195b2d40e38499ce306fbdaa4292"
+    },
+    {
+      "repository": "debian-image-recipes",
+      "base_commit": "9262b4d079823d2cd2e23c03f2e6894694ca0ec4",
+      "patch": "patches/debian-image-recipes/local.patch",
+      "sha256": "d4ab983fe3bfc15abbc5ea0b4ee1f931a9886b7af2bde9155c3d25b71abfa662"
+    },
+    {
+      "repository": "u-boot",
+      "base_commit": "a515a10c2a36772161b5653961bc25247a9b6c32",
+      "patch": "patches/u-boot/local.patch",
+      "sha256": "7708f931bec5016b26d8083c250e72dd780ec5ecfce80a7f842fb16e8a0264ca"
+    },
+    {
+      "repository": "tf-rmm/ext/mbedtls",
+      "base_commit": "2ca6c285a0dd3f33982dd57299012dacab1ff206",
+      "patch": "patches/tf-rmm-ext-mbedtls/local.patch",
+      "sha256": "14ddcfc141a505cae21c72fde7f71e1f4e11a64d4fdf3f33c0da8fa465b00bf8"
+    },
+    {
+      "repository": "tf-rmm/ext/t_cose",
+      "base_commit": "117159b95608ce236bd69e6384e1319d7a212107",
+      "patch": "patches/tf-rmm-ext-t_cose/local.patch",
+      "sha256": "1adfb05ea0bc728f4c1a97c61b32780c09b24055d2d31e114ed78807bc51a9d1"
+    }
+  ],
+  "copies": [
+    {
+      "source": "armbian-rkbin/rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.16.bin",
+      "destination": "opencca-assets/rk3588/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.16.bin",
+      "sha256": "5aa6271195e422a2c30a8e801baa64e4a10cbc6a5f1963f9a29e6dc85096c7bf"
+    },
+    {
+      "source": "armbian-rkbin/rk35/rk3588_spl_loader_v1.16.113.bin",
+      "destination": "opencca-assets/rk3588/rk3588_spl_loader_v1.16.113.bin",
+      "sha256": "4cc43c2ff29e08b5491b4d52528346aa7da6948128c17e670ff8a000029c9408"
+    },
+    {
+      "source": "armbian-rkbin/rk35/rk3588_spl_loader_v1.16.113.bin",
+      "destination": "opencca-assets/rk3588/rk3588_spl_loader_v1.08.111.bin",
+      "sha256": "4cc43c2ff29e08b5491b4d52528346aa7da6948128c17e670ff8a000029c9408"
+    }
+  ]
+}

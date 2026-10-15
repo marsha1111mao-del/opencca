@@ -1,6 +1,6 @@
 [submodule "tf-rmm"]
 	path = tf-rmm
-	url = git@github.com:marsha1111mao-del/tf-rmm.git
+	url = https://github.com/marsha1111mao-del/tf-rmm.git
 	branch = main
 [submodule "armbian-rkbin"]
 	path = armbian-rkbin

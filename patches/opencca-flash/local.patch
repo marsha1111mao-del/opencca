@@ -1,0 +1,33 @@
+diff --git a/.env.template b/.env.template
+index b21cb56..7b8ffde 100644
+--- a/.env.template
++++ b/.env.template
+@@ -7,7 +7,7 @@ readonly __root_dir__=$__script_dir__/
+ 
+ export OPENCCA_SNAPSHOT_DIR=$__root_dir__/snapshot
+ export OPENCCA_RKDEVELOP_TOOL="$__root_dir__/tools/rkdeveloptool"
+-export OPENCCA_SPL_LOADER="$__root_dir__/tools/rk3588/rk3588_spl_loader_v1.08.111.bin"
++export OPENCCA_SPL_LOADER="$__root_dir__/tools/rk3588/rk3588_spl_loader_v1.16.113.bin"
+ 
+ #
+ # OPENCCA_MASKROM_PIN: GPIO Pin on flash server
+@@ -52,4 +52,4 @@ export OPENCCA_MASKROM_RELEASE_DELAY=3
+ 
+ # OPENCCA_TTYUSB:
+ #  TTL to USB device
+-export OPENCCA_TTYUSB=/dev/ttyUSB0
+\ No newline at end of file
++export OPENCCA_TTYUSB=/dev/ttyUSB0
+diff --git a/flash.sh b/flash.sh
+index 41624a6..ef0801d 100755
+--- a/flash.sh
++++ b/flash.sh
+@@ -28,7 +28,7 @@ function source_env {
+ source_env 
+ SNAPSHOT_DIR="${OPENCCA_SNAPSHOT_DIR:-$ROOT_DIR/snapshot}"
+ RKDEVELOP_TOOL="${OPENCCA_RKDEVELOP_TOOL:-sudo $ROOT_DIR/tools/rkdeveloptool}"
+-OPENCCA_SPL_LOADER="${OPENCCA_SPL_LOADER:-$ROOT_DIR/tools/rk3588/rk3588_spl_loader_v1.08.111.bin}"
++OPENCCA_SPL_LOADER="${OPENCCA_SPL_LOADER:-$ROOT_DIR/tools/rk3588/rk3588_spl_loader_v1.16.113.bin}"
+ CMD=$RKDEVELOP_TOOL
+ 
+ BOARD_CTRL=$SCRIPT_DIR/board/board.sh

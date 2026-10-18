@@ -1,8 +1,58 @@
 diff --git a/buildconf/firmware_opencca.mk b/buildconf/firmware_opencca.mk
-index 5ff1517..3ca10dc 100755
+index 5ff1517..3d7b845 100755
 --- a/buildconf/firmware_opencca.mk
 +++ b/buildconf/firmware_opencca.mk
-@@ -93,7 +93,7 @@ rmm-clean: ## clean rmm
+@@ -5,6 +5,7 @@ include env_aarch64.mk
+ LOG = 50 ## set log level for tfa and rmm
+ DEBUG = 1 ## set debug mode for tfa and rmm
+ ENABLE_OPENCCA_PERF = 1 ## enable opencca perf mode
++RSI_LOG_LEVEL ?= 0 ## per-call RSI tracing is opt-in, independent of diagnostics
+ CLEAN_BUILD ?= 0 ## remove build files before build
+ 
+ $(info using LOG=$(LOG))
+@@ -55,7 +56,8 @@ tfa-clean: ## clean tfa
+ # RMM
+ # --------------------------
+ 
+-RMM_ELF ?= $(RMM_DIR)/build/$(RMM_BUILD_TYPE)/rmm.elf
++RMM_BUILD_DIR ?= $(RMM_DIR)/build
++RMM_ELF ?= $(RMM_BUILD_DIR)/$(RMM_BUILD_TYPE)/rmm.elf
+ RMM_BUILD_TYPE := $(if $(filter 1,$(DEBUG)),Debug,Release)
+ RMM_CLEAN_FLAGS :=
+ 
+@@ -68,32 +70,33 @@ rmm: ## build rmm
+ 
+ 	@if [ "$(CLEAN_BUILD)" = "1" ]; then \
+ 		echo "Cleaning $(RMM_DIR)..."; \
+-		rm -rf $(RMM_DIR)/build; \
++		rm -rf $(RMM_BUILD_DIR); \
+ 	fi
+ 
+-	mkdir -p $(RMM_DIR)/build
++	mkdir -p $(RMM_BUILD_DIR) $(SNAPSHOT_DIR)
+ 
+ 	cd $(RMM_DIR) && \
+-	cmake -S $(RMM_DIR)/ -B $(RMM_DIR)/build \
++	cmake -S $(RMM_DIR)/ -B $(RMM_BUILD_DIR) \
+ 		-DCROSS_COMPILE=$(CROSS_COMPILE) \
+ 		-DRMM_CONFIG=rk3588_defcfg \
+ 		-DLOG_LEVEL=$(LOG) \
++		-DRSI_LOG_LEVEL=$(RSI_LOG_LEVEL) \
+ 		-DCMAKE_BUILD_TYPE=$(RMM_BUILD_TYPE) \
+ 		-DENABLE_OPENCCA_PERF=$(ENABLE_OPENCCA_PERF) 
+ 	 	
+ 	cd $(RMM_DIR) && \
+-	cmake --build build $(RMM_CLEAN_FLAGS) -j$(NPROC)
++	cmake --build $(RMM_BUILD_DIR) $(RMM_CLEAN_FLAGS) -j$(NPROC)
+ 
+-	cp -rf $(RMM_ELF) $(SNAPSHOT_DIR)/tf-rmm.elf || true
++	cp -f $(RMM_ELF) $(SNAPSHOT_DIR)/tf-rmm.elf
+ 
+ rmm-clean: ## clean rmm
+-	-rm -r $(RMM_DIR)/build	
++	-rm -r $(RMM_BUILD_DIR)
+ 
+ # --------------------------
  # U-Boot
  # --------------------------
  
@@ -11,7 +61,17 @@ index 5ff1517..3ca10dc 100755
  UBOOT_CONFIG := $(UBOOT_DIR)/.config
  UBOOT_FRAGMENT ?= $(UBOOT_DIR)/rk3588_fragment.config ## Uboot fragment
  UBOOT_BIN := idbloader.img u-boot.itb u-boot-rockchip.bin u-boot-rockchip-spi.bin u-boot
-@@ -140,4 +140,3 @@ uboot-menuconfig:  ## run menuconfig for uboot
+@@ -118,6 +121,9 @@ uboot: ## uboot build
+ 		BL31=$(SNAPSHOT_DIR)/bl31.elf \
+ 		RMM=$(SNAPSHOT_DIR)/tf-rmm.elf 
+ 	
++	python3 $(ROOT_DIR)/scripts/check-firmware-layout.py \
++		--rmm $(SNAPSHOT_DIR)/tf-rmm.elf --uboot $(UBOOT_DIR)/u-boot
++
+ 	-cp -rf $(UBOOT_DIR)/arch/arm/dts/rk3588-rock-5b.dtb \
+ 		$(SNAPSHOT_DIR)/uboot-rk3588-rock-5b.dtb
+ 
+@@ -140,4 +146,3 @@ uboot-menuconfig:  ## run menuconfig for uboot
  
  
  clean: tfa-clean rmm-clean uboot-clean ## clean all

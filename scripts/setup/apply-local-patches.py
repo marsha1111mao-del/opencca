@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -19,6 +20,24 @@ def git(repo, *args):
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def same_patch(actual, expected):
+    """Git may lengthen index abbreviations as the object database grows."""
+    actual_lines = actual.splitlines(keepends=True)
+    expected_lines = expected.splitlines(keepends=True)
+    if len(actual_lines) != len(expected_lines):
+        return False
+    index = re.compile(rb"index ([0-9a-f]+)\.\.([0-9a-f]+)(.*)")
+    for actual_line, expected_line in zip(actual_lines, expected_lines):
+        if actual_line == expected_line:
+            continue
+        a, e = index.fullmatch(actual_line.rstrip(b'\n')), index.fullmatch(expected_line.rstrip(b'\n'))
+        if not (a and e and a[1].startswith(e[1]) and
+                a[2].startswith(e[2]) and a[3] == e[3] and
+                actual_line.endswith(b'\n') == expected_line.endswith(b'\n')):
+            return False
+    return True
 
 
 def restore(check=False):
@@ -38,7 +57,7 @@ def restore(check=False):
                 "git", "-C", str(repo), "diff", "--binary",
                 "--no-ext-diff", "--no-textconv", "HEAD"
             ])
-            if hashlib.sha256(actual).hexdigest() != entry["sha256"]:
+            if not same_patch(actual, patch.read_bytes()):
                 raise ValueError(
                     f"{entry['repository']}: changes differ from the published patch"
                 )

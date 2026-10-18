@@ -11,7 +11,7 @@
       "repository": "opencca-build",
       "base_commit": "d691ada999f1322444ce52dccb655579812fab3a",
       "patch": "patches/opencca-build/local.patch",
-      "sha256": "79ffd2c7f0eccc6c6e4e86b2afc7e8c58ada195b2d40e38499ce306fbdaa4292"
+      "sha256": "c9ad5334041f87f71201f597f38140f4b4adf901688ebc8fe0661d4523fa7cb8"
     },
     {
       "repository": "debian-image-recipes",
@@ -23,7 +23,7 @@
       "repository": "u-boot",
       "base_commit": "a515a10c2a36772161b5653961bc25247a9b6c32",
       "patch": "patches/u-boot/local.patch",
-      "sha256": "7708f931bec5016b26d8083c250e72dd780ec5ecfce80a7f842fb16e8a0264ca"
+      "sha256": "38ffda0247c2cf36ec81a7b058cb7184caabb911a68e001fa3aca986667df06c"
     },
     {
       "repository": "tf-rmm/ext/mbedtls",

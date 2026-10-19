@@ -23,7 +23,7 @@
       "repository": "u-boot",
       "base_commit": "a515a10c2a36772161b5653961bc25247a9b6c32",
       "patch": "patches/u-boot/local.patch",
-      "sha256": "38ffda0247c2cf36ec81a7b058cb7184caabb911a68e001fa3aca986667df06c"
+      "sha256": "aa907c5a15be0ab7c3d086cc316f4fb8833b8f43f632e3835c03e06eb84d8805"
     },
     {
       "repository": "tf-rmm/ext/mbedtls",

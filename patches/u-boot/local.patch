@@ -1,5 +1,5 @@
 diff --git a/rk3588_fragment.config b/rk3588_fragment.config
-index 7203883802..1759a843ab 100644
+index 7203883802..55390c4acc 100644
 --- a/rk3588_fragment.config
 +++ b/rk3588_fragment.config
 @@ -4,4 +4,8 @@ CONFIG_DEBUG=y
@@ -8,7 +8,7 @@ index 7203883802..1759a843ab 100644
  CONFIG_ATF_NO_PLATFORM_PARAM=n
 -CONFIG_BOOTARGS_OVERWRITE=" maxcpus=2"
 \ No newline at end of file
-+CONFIG_BOOTARGS_OVERWRITE=" maxcpus=2"
++CONFIG_BOOTARGS_OVERWRITE=""
 +CONFIG_BOOTCOMMAND="bootflow scan"
 +
 +# Initial BL33 placement must not overlap RMM BSS before U-Boot relocates.

@@ -36,6 +36,12 @@
       "base_commit": "117159b95608ce236bd69e6384e1319d7a212107",
       "patch": "patches/tf-rmm-ext-t_cose/local.patch",
       "sha256": "1adfb05ea0bc728f4c1a97c61b32780c09b24055d2d31e114ed78807bc51a9d1"
+    },
+    {
+      "repository": "trusted-firmware-a",
+      "base_commit": "fb03b9ed73edfee30072f2db9e3a69a30b0ba0f3",
+      "patch": "patches/trusted-firmware-a/local.patch",
+      "sha256": "c79944b5161cc9fcd28cca138818f68859f5b9c67ece7de6290096f3028a8a1b"
     }
   ],
   "copies": [

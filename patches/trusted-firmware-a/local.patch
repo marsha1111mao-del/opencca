@@ -1,0 +1,119 @@
+diff --git a/drivers/arm/gic/v3/gicv3_main.c b/drivers/arm/gic/v3/gicv3_main.c
+index 2be19db7d..9522648b1 100644
+--- a/drivers/arm/gic/v3/gicv3_main.c
++++ b/drivers/arm/gic/v3/gicv3_main.c
+@@ -1264,6 +1264,17 @@ void gicv3_clear_interrupt_pending(unsigned int id, unsigned int proc_num)
+ 	dsbishst();
+ }
+ 
++bool gicv3_sgi_is_enabled(unsigned int id, unsigned int proc_num)
++{
++	assert(id < MIN_PPI_ID);
++	assert(gicv3_driver_data != NULL);
++	assert(proc_num < gicv3_driver_data->rdistif_num);
++	assert(gicv3_driver_data->rdistif_base_addrs != NULL);
++
++	return (gicr_read_isenabler0(
++		gicv3_driver_data->rdistif_base_addrs[proc_num]) & BIT_32(id)) != 0U;
++}
++
+ /*******************************************************************************
+  * This function sets the pending status of an interrupt identified by id.
+  * The proc_num is used if the interrupt is SGI or PPI and programs the
+diff --git a/include/drivers/arm/gicv3.h b/include/drivers/arm/gicv3.h
+index ca46eb1a9..eca1f2731 100644
+--- a/include/drivers/arm/gicv3.h
++++ b/include/drivers/arm/gicv3.h
+@@ -588,6 +588,7 @@ void gicv3_set_spi_routing(unsigned int id, unsigned int irm,
+ 		u_register_t mpidr);
+ void gicv3_set_interrupt_pending(unsigned int id, unsigned int proc_num);
+ void gicv3_clear_interrupt_pending(unsigned int id, unsigned int proc_num);
++bool gicv3_sgi_is_enabled(unsigned int id, unsigned int proc_num);
+ unsigned int gicv3_set_pmr(unsigned int mask);
+ unsigned int gicv3_deactivate_priority(unsigned int mask);
+ 
+diff --git a/include/services/rmmd_svc.h b/include/services/rmmd_svc.h
+index 5d580a9d5..e03feeb61 100644
+--- a/include/services/rmmd_svc.h
++++ b/include/services/rmmd_svc.h
+@@ -82,6 +82,8 @@
+ 					/* 0x1B0 - 0x1B1 */
+ #define RMM_GTSI_DELEGATE		SMC64_RMMD_EL3_FID(U(0))
+ #define RMM_GTSI_UNDELEGATE		SMC64_RMMD_EL3_FID(U(1))
++#define RMM_OPENCCA_XSHM_KICK		SMC64_RMMD_EL3_FID(U(0x1E))
++#define RMM_OPENCCA_XSHM_TAKE		SMC64_RMMD_EL3_FID(U(0x1D))
+ 
+ /* Return error codes from RMM-EL3 SMCs */
+ #define E_RMM_OK			 0
+diff --git a/services/std_svc/rmmd/rmmd_main.c b/services/std_svc/rmmd/rmmd_main.c
+index e9891d00a..587eb1e7c 100644
+--- a/services/std_svc/rmmd/rmmd_main.c
++++ b/services/std_svc/rmmd/rmmd_main.c
+@@ -6,6 +6,9 @@
+ 
+ #include <assert.h>
+ #include <errno.h>
++#if ENABLE_OPENCCA
++#include <drivers/arm/gicv3.h>
++#endif
+ #include <inttypes.h>
+ #include <stdint.h>
+ #include <string.h>
+@@ -41,6 +44,11 @@
+  ******************************************************************************/
+ static bool rmm_boot_failed;
+ 
++#if ENABLE_OPENCCA
++#define OPENCCA_XSHM_SGI 15U
++static bool xshm_wake_pending[PLATFORM_CORE_COUNT];
++#endif
++
+ /*******************************************************************************
+  * RMM context information.
+  ******************************************************************************/
+@@ -467,6 +475,45 @@ uint64_t rmmd_rmm_el3_handler(uint32_t smc_fid, uint64_t x1, uint64_t x2,
+ 	}
+ 
+ 	switch (smc_fid) {
++#if ENABLE_OPENCCA
++	case RMM_OPENCCA_XSHM_KICK: {
++		int core;
++
++		if ((x1 & ~MPIDR_AFFINITY_MASK) != 0ULL ||
++		    (x1 & MPIDR_AFFLVL_MASK) >= 16ULL ||
++		    x2 > 1ULL || (x3 | x4) != 0ULL)
++			SMC_RET1(handle, E_RMM_INVAL);
++		core = plat_core_pos_by_mpidr(x1);
++		if (core < 0 || (unsigned int)core >= PLATFORM_CORE_COUNT ||
++		    x1 == (read_mpidr_el1() & MPIDR_AFFINITY_MASK))
++			SMC_RET1(handle, E_RMM_INVAL);
++		if (x2 == 1ULL) {
++			if (gicv3_get_interrupt_group(OPENCCA_XSHM_SGI,
++				(unsigned int)core) != INTR_GROUP1NS ||
++			    !gicv3_sgi_is_enabled(OPENCCA_XSHM_SGI,
++				(unsigned int)core))
++				SMC_RET1(handle, E_RMM_INVAL);
++			xshm_wake_pending[core] = true;
++			gicv3_raise_sgi(OPENCCA_XSHM_SGI, GICV3_G1NS, x1);
++		} else {
++			gicv3_raise_sgi(0U, GICV3_G1NS, x1);
++		}
++		SMC_RET1(handle, E_RMM_OK);
++	}
++	case RMM_OPENCCA_XSHM_TAKE: {
++		unsigned int core = plat_my_core_pos();
++		bool pending;
++
++		if ((x1 | x2 | x3 | x4) != 0ULL)
++			SMC_RET1(handle, E_RMM_INVAL);
++		pending = xshm_wake_pending[core];
++		if (pending) {
++			xshm_wake_pending[core] = false;
++			gicv3_clear_interrupt_pending(OPENCCA_XSHM_SGI, core);
++		}
++		SMC_RET1(handle, pending ? 1ULL : 0ULL);
++	}
++#endif
+ 	case RMM_GTSI_DELEGATE:
+ 		ret = gpt_delegate_pas(x1, PAGE_SIZE_4KB, SMC_FROM_REALM);
+ 		SMC_RET1(handle, gpt_to_gts_error(ret, smc_fid, x1));

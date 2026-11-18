@@ -33,20 +33,451 @@ index ca46eb1a9..eca1f2731 100644
  unsigned int gicv3_deactivate_priority(unsigned int mask);
  
 diff --git a/include/services/rmmd_svc.h b/include/services/rmmd_svc.h
-index 5d580a9d5..e03feeb61 100644
+index 5d580a9d5..bcf411e10 100644
 --- a/include/services/rmmd_svc.h
 +++ b/include/services/rmmd_svc.h
-@@ -82,6 +82,8 @@
+@@ -82,6 +82,9 @@
  					/* 0x1B0 - 0x1B1 */
  #define RMM_GTSI_DELEGATE		SMC64_RMMD_EL3_FID(U(0))
  #define RMM_GTSI_UNDELEGATE		SMC64_RMMD_EL3_FID(U(1))
 +#define RMM_OPENCCA_XSHM_KICK		SMC64_RMMD_EL3_FID(U(0x1E))
 +#define RMM_OPENCCA_XSHM_TAKE		SMC64_RMMD_EL3_FID(U(0x1D))
++#define RMM_OPENCCA_GPU_IRQ		SMC64_RMMD_EL3_FID(U(0x1C))
  
  /* Return error codes from RMM-EL3 SMCs */
  #define E_RMM_OK			 0
+diff --git a/lib/el3_runtime/aarch64/context_mgmt.c b/lib/el3_runtime/aarch64/context_mgmt.c
+index 3fac96e6b..cbc3535f8 100644
+--- a/lib/el3_runtime/aarch64/context_mgmt.c
++++ b/lib/el3_runtime/aarch64/context_mgmt.c
+@@ -174,6 +174,12 @@ static void setup_realm_context(cpu_context_t *ctx, const struct entry_point_inf
+ 	scr_el3 = read_ctx_reg(state, CTX_SCR_EL3);
+ 
+ 	scr_el3 |= SCR_NS_BIT | SCR_NSE_BIT;
++#if ENABLE_OPENCCA
++	/* Group0 GPU events are handled in EL3, including while RMM or a
++	 * Realm runs. The handler records without calling back into RMM.
++	 */
++	scr_el3 |= SCR_FIQ_BIT;
++#endif
+ 
+ 	/* CSV2 version 2 and above */
+ 	if (is_feat_csv2_2_supported()) {
+diff --git a/plat/rockchip/rk3588/opencca/opencca-rk3588.mk b/plat/rockchip/rk3588/opencca/opencca-rk3588.mk
+index ab565021f..6ca7a828a 100644
+--- a/plat/rockchip/rk3588/opencca/opencca-rk3588.mk
++++ b/plat/rockchip/rk3588/opencca/opencca-rk3588.mk
+@@ -1,5 +1,8 @@
+ PLAT_INCLUDES += -I${RK_PLAT_SOC}/opencca
++PLAT_INCLUDES += -I../shared/include
+ 
+ BL31_SOURCES		+=	${RK_PLAT_SOC}/opencca/rk3588_opencca.c         	\
++				${RK_PLAT_SOC}/opencca/rk3588_gpu_irq.c          \
++				../shared/opencca_gpu_irq_monitor.c               \
+ 				${RK_PLAT_SOC}/opencca/rk3588_plat_attest_token.c \
+ 				${RK_PLAT_SOC}/opencca/rk3588_realm_attest_key.c 
+diff --git a/plat/rockchip/rk3588/opencca/rk3588_gpu_irq.c b/plat/rockchip/rk3588/opencca/rk3588_gpu_irq.c
+new file mode 100644
+index 000000000..ec7cda59a
+--- /dev/null
++++ b/plat/rockchip/rk3588/opencca/rk3588_gpu_irq.c
+@@ -0,0 +1,368 @@
++/* SPDX-License-Identifier: BSD-3-Clause */
++#include <assert.h>
++#include <arch_helpers.h>
++#include <bl31/interrupt_mgmt.h>
++#include <common/debug.h>
++#include <drivers/arm/gicv3.h>
++#include <lib/mmio.h>
++#include <lib/spinlock.h>
++#include <opencca_gpu_irq_monitor.h>
++#include <plat/common/platform.h>
++#include <platform_def.h>
++#include <services/rmm_core_manifest.h>
++#include <string.h>
++#include <stddef.h>
++
++#define GPU_BASE ULL(0xfb000000)
++#define GPU_RAW 0x20U
++#define GPU_CLEAR 0x24U
++#define GPU_MASK 0x28U
++#define JOB_RAW 0x1000U
++#define JOB_CLEAR 0x1004U
++#define JOB_MASK 0x1008U
++#define MMU_RAW 0x2000U
++#define MMU_CLEAR 0x2004U
++#define MMU_MASK 0x2008U
++
++static struct ogi_monitor monitor;
++static struct ogi_mailbox message;
++static spinlock_t irq_lock;
++static uint64_t saved_route[3];
++static unsigned int saved_group[3];
++static uint8_t saved_priority[3];
++static bool saved_enabled[3], routing_owned, masked;
++
++/* Root can access the already mapped RMM-private reserved region.
++ * No caller outside the Realm-origin RMM service can register this page.
++ */
++static struct ogi_fast_view *published_view;
++static uint64_t published_sequence;
++static bool view_exhausted;
++static uint32_t approved_masks[3];
++static bool approved_masks_valid;
++
++static void view_begin(void)
++{
++	if (published_view == NULL || (published_sequence & 1U) != 0U)
++		return;
++	if (published_sequence > UINT64_MAX - 2U) {
++		__atomic_store_n(&published_view->sequence, 0U, __ATOMIC_RELEASE);
++		flush_dcache_range((uintptr_t)published_view, sizeof(*published_view));
++		dsbsy();
++		published_view = NULL;
++		view_exhausted = true;
++		return; /* Only the optimization is disabled; normal SMC stays live. */
++	}
++	published_sequence++;
++	__atomic_store_n(&published_view->sequence, published_sequence, __ATOMIC_RELEASE);
++	flush_dcache_range((uintptr_t)published_view, sizeof(uint64_t));
++	dsbsy();
++}
++
++static void view_end(void)
++{
++	if (published_view == NULL)
++		return;
++	assert((published_sequence & 1U) != 0U);
++	published_view->abi = OGI_ABI;
++	published_view->reserved = 0U;
++	published_view->magic = OGI_FAST_MAGIC;
++	published_view->stats = monitor.stats;
++	memcpy(published_view->masks, approved_masks, sizeof(approved_masks));
++	published_view->masks_valid = approved_masks_valid;
++	memset(published_view->padding, 0, sizeof(published_view->padding));
++	flush_dcache_range((uintptr_t)published_view + sizeof(uint64_t),
++		sizeof(*published_view) - sizeof(uint64_t));
++	dsbsy();
++	published_sequence++;
++	__atomic_store_n(&published_view->sequence, published_sequence, __ATOMIC_RELEASE);
++	flush_dcache_range((uintptr_t)published_view, sizeof(uint64_t));
++	dsbsy();
++}
++
++static void mask_sources(void)
++{
++	mmio_write_32(GPU_BASE + GPU_MASK, 0U);
++	mmio_write_32(GPU_BASE + JOB_MASK, 0U);
++	mmio_write_32(GPU_BASE + MMU_MASK, 0U);
++	dsbsy();
++	masked = true;
++	approved_masks_valid = false;
++}
++
++static void enable_sources(void)
++{
++	if (!monitor.stats.active || monitor.stats.simulation || monitor.stats.lost ||
++	    monitor.stats.queued != 0U)
++		return;
++	/* FW request-complete MMU bits are polled by the existing fixed AS
++	 * command protocol. Here only persistent AS faults need notification.
++	 */
++	mmio_write_32(GPU_BASE + GPU_MASK, 3U);
++	mmio_write_32(GPU_BASE + MMU_MASK, 0xffffU);
++	mmio_write_32(GPU_BASE + JOB_MASK, UINT32_MAX);
++	dsbsy();
++	masked = false;
++	/* Reserved bits may read zero. Certify only the actual result of these
++	 * trusted writes, and require every bound fault/progress source.
++	 * The RMM independently reads current masks on each fast attempt.
++	 */
++	approved_masks[0] = mmio_read_32(GPU_BASE + GPU_MASK);
++	approved_masks[1] = mmio_read_32(GPU_BASE + JOB_MASK);
++	approved_masks[2] = mmio_read_32(GPU_BASE + MMU_MASK);
++	uint32_t required_job = UINT32_C(1) << 31U, required_mmu = 1U;
++	for (unsigned int i = 0U; i < OGI_CSGS; i++) {
++		if (monitor.bindings[i].epoch != 0U) {
++			required_job |= UINT32_C(1) << i;
++			required_mmu |= UINT32_C(1) << monitor.bindings[i].as;
++		}
++	}
++	approved_masks_valid = approved_masks[0] == 3U &&
++		(approved_masks[1] & required_job) == required_job &&
++		(approved_masks[2] & required_mmu) == required_mmu;
++}
++
++static unsigned int capture(unsigned int intid, unsigned int source)
++{
++	struct ogi_snapshot snapshot = {
++		.intid = intid, .cpu = plat_my_core_pos(), .flags = source,
++		.timestamp = read_cntpct_el0()
++	};
++	if (!monitor.stats.active || monitor.stats.simulation)
++		return OGI_STATE;
++	mask_sources();
++	snapshot.gpu_raw = mmio_read_32(GPU_BASE + GPU_RAW);
++	snapshot.job_raw = mmio_read_32(GPU_BASE + JOB_RAW);
++	snapshot.mmu_raw = mmio_read_32(GPU_BASE + MMU_RAW) & 0xffffU;
++	for (unsigned int as = 0U; as < OGI_AS_COUNT; as++) {
++		if ((snapshot.mmu_raw & (1U << as)) == 0U)
++			continue;
++		uintptr_t base = GPU_BASE + 0x2400U + as * 0x40U;
++		snapshot.fault_status[as] = mmio_read_32(base + 0x1cU);
++		snapshot.fault_address[as] = mmio_read_32(base + 0x20U) |
++			((uint64_t)mmio_read_32(base + 0x24U) << 32U);
++	}
++	unsigned int status = ogi_monitor_capture(&monitor, &snapshot);
++	/* The semantic snapshot is protected before any W1C operation. A fault
++	 * is latched in each affected record; repeated same-bit faults cannot
++	 * restore health. RMM must consume before rebinding or authorizing success.
++	 */
++	if (status == OGI_OK) {
++		mmio_write_32(GPU_BASE + GPU_CLEAR, snapshot.gpu_raw);
++		mmio_write_32(GPU_BASE + MMU_CLEAR, snapshot.mmu_raw);
++		mmio_write_32(GPU_BASE + JOB_CLEAR, snapshot.job_raw);
++		dsbsy();
++	}
++	return status;
++}
++
++static uint64_t interrupt_handler(uint32_t unused, uint32_t flags,
++		void *handle, void *cookie)
++{
++	unsigned int id = plat_ic_acknowledge_interrupt();
++	(void)unused; (void)flags; (void)handle; (void)cookie;
++	if (id >= 1020U)
++		return 0U;
++	spin_lock(&irq_lock);
++	view_begin();
++	if (id >= OGI_JOB_INTID && id <= OGI_GPU_INTID &&
++	    monitor.stats.active && !monitor.stats.simulation) {
++		/* Another line can already be pending from the same snapshot.
++		 * Its GIC activation is acknowledged without duplicating that capture.
++		 */
++		if (!masked)
++			(void)capture(id, OGI_SOURCE_EL3_IRQ);
++	}
++	/* Device sources are masked before EOI; no RMM callback or RMM lock is
++	 * taken from EL3 interrupt context. The original world resumes directly.
++	 */
++	plat_ic_end_of_interrupt(id);
++	view_end();
++	spin_unlock(&irq_lock);
++	return 0U;
++}
++
++void opencca_gpu_irq_init(void)
++{
++	uint32_t flags = 0U;
++	set_interrupt_rm_flag(flags, NON_SECURE);
++	set_interrupt_rm_flag(flags, SECURE);
++	if (register_interrupt_type_handler(INTR_TYPE_EL3, interrupt_handler, flags) != 0)
++		panic();
++}
++
++static bool route(bool enable)
++{
++	if (enable) {
++		if (routing_owned)
++			return false;
++		for (unsigned int i = 0U; i < 3U; i++)
++			if (gicv3_get_interrupt_group(OGI_JOB_INTID + i, 0U) != INTR_GROUP1NS)
++				return false;
++	}
++	mask_sources();
++	/* Preflight every active state before changing any routing/group. A
++	 * racing EOI can make this fail transiently; it cannot publish a partial
++	 * new binding or grant raw access.
++	 */
++	for (unsigned int i = 0U; i < 3U; i++)
++		if (gicv3_get_interrupt_active(OGI_JOB_INTID + i, 0U) != 0U)
++			return false;
++	for (unsigned int i = 0U; i < 3U; i++) {
++		unsigned int id = OGI_JOB_INTID + i;
++		uintptr_t router = PLAT_RK_GICD_BASE + 0x6000U + 8U * id;
++		uintptr_t priority = PLAT_RK_GICD_BASE + 0x400U + id;
++		if (enable) {
++			saved_route[i] = mmio_read_64(router);
++			saved_group[i] = gicv3_get_interrupt_group(id, 0U);
++			saved_priority[i] = mmio_read_8(priority);
++			saved_enabled[i] = (mmio_read_32(PLAT_RK_GICD_BASE +
++				0x100U + 4U * (id / 32U)) & (1U << (id % 32U))) != 0U;
++		}
++		gicv3_disable_interrupt(id, 0U);
++		if (gicv3_get_interrupt_active(id, 0U) != 0U)
++			return false;
++		gicv3_clear_interrupt_pending(id, 0U);
++		gicv3_set_interrupt_group(id, 0U, enable ? INTR_GROUP0 : saved_group[i]);
++		gicv3_set_interrupt_priority(id, 0U, enable ? 0x20U : saved_priority[i]);
++		if (enable)
++			gicv3_set_spi_routing(id, INTR_ROUTING_MODE_PE,
++				read_mpidr_el1() & MPIDR_AFFINITY_MASK);
++		else
++			mmio_write_64(router, saved_route[i]);
++		if (enable || saved_enabled[i])
++			gicv3_enable_interrupt(id, 0U);
++	}
++	routing_owned = enable;
++	dsbsy();
++	return true;
++}
++
++/* Called exclusively from the Realm-origin RMM-EL3 service dispatcher. */
++unsigned long opencca_gpu_irq_smc(unsigned long command, unsigned long pa,
++		unsigned long bytes)
++{
++	uintptr_t shared;
++	size_t capacity = plat_rmmd_get_el3_rmm_shared_mem(&shared);
++	unsigned int status = OGI_INPUT;
++	if (pa != shared || bytes != sizeof(message) || bytes > capacity)
++		return OGI_INPUT;
++	spin_lock(&irq_lock);
++	view_begin();
++	const size_t prefix = offsetof(struct ogi_mailbox, records);
++	inv_dcache_range(shared, prefix);
++	memcpy(&message, (const void *)shared, prefix);
++	message.count = 0U;
++	if (message.abi != OGI_ABI || message.command != command)
++		goto out;
++	switch (command) {
++	case OGI_START:
++		if (message.snapshot.flags != 0U &&
++		    message.snapshot.flags != OGI_SOURCE_SIMULATION)
++			break;
++		if (monitor.stats.active ||
++		    (message.snapshot.flags == 0U && !route(true))) {
++			status = OGI_STATE;
++			break;
++		}
++		status = ogi_monitor_start(&monitor,
++			message.snapshot.flags == OGI_SOURCE_SIMULATION);
++		if (status == OGI_OK && !monitor.stats.simulation)
++			enable_sources();
++		break;
++	case OGI_STOP:
++		if (routing_owned && !route(false)) {
++			status = OGI_STATE;
++			break;
++		}
++		ogi_monitor_stop(&monitor);
++		status = OGI_OK;
++		break;
++	case OGI_BIND:
++		if (!monitor.stats.simulation) {
++			(void)capture(OGI_JOB_INTID, OGI_SOURCE_ROOT_SAMPLE);
++			if (monitor.stats.queued != 0U || monitor.stats.lost) {
++				status = monitor.stats.lost ? OGI_LOST : OGI_STATE;
++				break;
++			}
++		}
++		status = ogi_monitor_bind(&monitor, &message.binding);
++		break;
++	case OGI_UNBIND:
++		if (!monitor.stats.simulation) {
++			/* RMM has proved the old CSG nonexecuting. Capture remaining
++			 * device levels against its OLD binding before discarding pending
++			 * GIC state; the caller drains and retries if anything remains.
++			 */
++			(void)capture(OGI_JOB_INTID, OGI_SOURCE_ROOT_SAMPLE);
++			bool busy = monitor.stats.queued != 0U || monitor.stats.lost;
++			for (unsigned int i=0U; i<3U; i++)
++				busy |= gicv3_get_interrupt_active(OGI_JOB_INTID+i,0U) != 0U;
++			if (busy) {
++				status = monitor.stats.lost ? OGI_LOST : OGI_STATE;
++				break;
++			}
++			for (unsigned int i=0U; i<3U; i++)
++				gicv3_clear_interrupt_pending(OGI_JOB_INTID+i,0U);
++		}
++		status = ogi_monitor_unbind(&monitor, &message.binding);
++		break;
++	case OGI_DRAIN:
++	case OGI_DRAIN_QUIET:
++		/* Sampling catches a level pending while the previous batch was
++		 * masked, and supports service progress if the Host stops the routed
++		 * CPU. It is explicitly not labelled a physical GIC delivery.
++		 */
++		if (monitor.stats.active && !monitor.stats.simulation &&
++		    monitor.stats.queued == 0U && !monitor.stats.lost)
++			(void)capture(OGI_JOB_INTID, OGI_SOURCE_ROOT_SAMPLE);
++		status = ogi_monitor_drain(&monitor, message.acknowledge,
++			message.records, &message.count);
++		if (command == OGI_DRAIN && (status == OGI_OK || status == OGI_EMPTY) &&
++		    monitor.stats.queued == 0U)
++			enable_sources();
++		break;
++	case OGI_VIEW_REGISTER: {
++		uintptr_t address = (uintptr_t)message.view_pa;
++		if (!monitor.stats.active || monitor.stats.simulation || view_exhausted ||
++		    (address & 4095U) != 0U || address < RMM_BASE ||
++		    address > RMM_LIMIT - sizeof(struct ogi_fast_view) ||
++		    (published_view != NULL && (uintptr_t)published_view != address)) {
++			status = OGI_INPUT;
++			break;
++		}
++		bool bound = false;
++		for (unsigned int i = 0U; i < OGI_CSGS; i++)
++			bound |= monitor.bindings[i].epoch != 0U;
++		if (bound) { status = OGI_STATE; break; }
++		published_view = (struct ogi_fast_view *)address;
++		view_begin(); /* First registration had no view at SMC entry. */
++		status = OGI_OK;
++		break;
++	}
++	case OGI_STATS:
++		status = OGI_OK;
++		break;
++	case OGI_SIM_CAPTURE:
++		/* Only the isolated, explicit simulation session can accept a
++		 * trusted RMM test scenario. Never upgrade it to EL3_IRQ provenance.
++		 */
++		if (monitor.stats.simulation &&
++		    message.snapshot.flags == OGI_SOURCE_SIMULATION)
++			status = ogi_monitor_capture(&monitor, &message.snapshot);
++		break;
++	default:
++		break;
++	}
++out:
++	view_end();
++	if (command == OGI_STOP && status == OGI_OK)
++		published_view = NULL;
++	message.status = status;
++	message.stats = monitor.stats;
++	size_t response = prefix + message.count * sizeof(message.records[0]);
++	memcpy((void *)shared, &message, response);
++	flush_dcache_range(shared, response);
++	spin_unlock(&irq_lock);
++	return status;
++}
+diff --git a/plat/rockchip/rk3588/opencca/rk3588_opencca.c b/plat/rockchip/rk3588/opencca/rk3588_opencca.c
+index 3d88e2543..949b377e7 100644
+--- a/plat/rockchip/rk3588/opencca/rk3588_opencca.c
++++ b/plat/rockchip/rk3588/opencca/rk3588_opencca.c
+@@ -225,6 +225,8 @@ void rk_gpt_setup(void)
+ void bl31_plat_runtime_setup(void)
+ {
+ 	rk_gpt_setup();
++	extern void opencca_gpu_irq_init(void);
++	opencca_gpu_irq_init();
+ 
+ 	// XXX: We are not using ROM lib on this board
+ }
+diff --git a/plat/rockchip/rk3588/opencca/rk3588_opencca.h b/plat/rockchip/rk3588/opencca/rk3588_opencca.h
+index af9d6b5ca..bb549da98 100644
+--- a/plat/rockchip/rk3588/opencca/rk3588_opencca.h
++++ b/plat/rockchip/rk3588/opencca/rk3588_opencca.h
+@@ -102,7 +102,7 @@
+ 
+ 
+ /* ARM_REALM_SIZE */
+-#define ARM_REALM_SIZE			(UL(0x02600000) -		\
++#define ARM_REALM_SIZE			(UL(0x02c00000) -		\
+ 					 ARM_EL3_RMM_SHARED_SIZE)
+ 
+ #define ARM_REALM_BASE			(ARM_EL3_RMM_SHARED_BASE +	\
 diff --git a/services/std_svc/rmmd/rmmd_main.c b/services/std_svc/rmmd/rmmd_main.c
-index e9891d00a..587eb1e7c 100644
+index e9891d00a..4812b97ae 100644
 --- a/services/std_svc/rmmd/rmmd_main.c
 +++ b/services/std_svc/rmmd/rmmd_main.c
 @@ -6,6 +6,9 @@
@@ -59,23 +490,29 @@ index e9891d00a..587eb1e7c 100644
  #include <inttypes.h>
  #include <stdint.h>
  #include <string.h>
-@@ -41,6 +44,11 @@
+@@ -41,6 +44,13 @@
   ******************************************************************************/
  static bool rmm_boot_failed;
  
 +#if ENABLE_OPENCCA
 +#define OPENCCA_XSHM_SGI 15U
 +static bool xshm_wake_pending[PLATFORM_CORE_COUNT];
++unsigned long opencca_gpu_irq_smc(unsigned long command, unsigned long pa,
++		unsigned long bytes);
 +#endif
 +
  /*******************************************************************************
   * RMM context information.
   ******************************************************************************/
-@@ -467,6 +475,45 @@ uint64_t rmmd_rmm_el3_handler(uint32_t smc_fid, uint64_t x1, uint64_t x2,
+@@ -467,6 +477,49 @@ uint64_t rmmd_rmm_el3_handler(uint32_t smc_fid, uint64_t x1, uint64_t x2,
  	}
  
  	switch (smc_fid) {
 +#if ENABLE_OPENCCA
++	case RMM_OPENCCA_GPU_IRQ:
++		if (x4 != 0ULL)
++			SMC_RET1(handle, E_RMM_INVAL);
++		SMC_RET1(handle, opencca_gpu_irq_smc(x1, x2, x3));
 +	case RMM_OPENCCA_XSHM_KICK: {
 +		int core;
 +

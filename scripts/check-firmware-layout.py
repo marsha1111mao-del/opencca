@@ -37,7 +37,7 @@ def main():
     p.add_argument('--rmm', type=Path, required=True)
     p.add_argument('--uboot', type=Path, required=True)
     p.add_argument('--rmm-base', type=lambda x: int(x, 0), default=0x201000)
-    p.add_argument('--rmm-size', type=lambda x: int(x, 0), default=0x25ff000)
+    p.add_argument('--rmm-size', type=lambda x: int(x, 0), default=0x2bff000)
     a = p.parse_args()
     try:
         rmm = memory_ranges(a.rmm, a.rmm_base)

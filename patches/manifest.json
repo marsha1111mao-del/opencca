@@ -41,7 +41,7 @@
       "repository": "trusted-firmware-a",
       "base_commit": "fb03b9ed73edfee30072f2db9e3a69a30b0ba0f3",
       "patch": "patches/trusted-firmware-a/local.patch",
-      "sha256": "c79944b5161cc9fcd28cca138818f68859f5b9c67ece7de6290096f3028a8a1b"
+      "sha256": "33182b2a0d7da4309fecbbc27988ccfe11dbdb91f7a6b5575a58eddd34c35f96"
     }
   ],
   "copies": [

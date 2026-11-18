@@ -81,7 +81,8 @@ def restore(check=False):
         else:
             copies.append((source, target))
     for repo, patch in pending:
-        result = git(repo, "apply", str(patch))
+        # Keep newly created files visible to the later git diff HEAD check.
+        result = git(repo, "apply", "--intent-to-add", str(patch))
         if result.returncode:
             raise ValueError(result.stderr)
         print(f"RESTORED {repo.relative_to(ROOT)}")
